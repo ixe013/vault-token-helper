@@ -7,6 +7,7 @@
 #include <iostream>
 #include <string>
 #include <stdio.h>
+#include <vector>
 #include <Wincrypt.h>
 
 void MyHandleError(const char *s);
@@ -16,51 +17,37 @@ typedef std::basic_string<TCHAR>   tstring;
 static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
 
-int coucou()
+std::string decrypt(const std::vector<char>& encrypted)
 {
-    open(NULL, 0);
-    close(42);
-    return 42;
-}
-
-DWORD decrypt(const std::string& token, BYTE ** buffer)
-{
-    DWORD result = 0; //Number of bytes returned
-
-    DATA_BLOB plaintext;
-    //DATA_BLOB entropy;
-    DATA_BLOB ciphertext;
-
-    BYTE *pbDataInput =(BYTE *)token.c_str();
-    DWORD cbDataInput = token.size();  //Do not encrypt the null terminator, could lead to a known plain text attack
-    plaintext.pbData = pbDataInput;
-    plaintext.cbData = cbDataInput;
+    std::string result;
+    // Copyright (C) Microsoft.  All rights reserved.
+    // Encrypt data from DATA_BLOB DataIn to DATA_BLOB DataOut.
+    // Then decrypt to DATA_BLOB DataVerify.
 
     //-------------------------------------------------------------------
-    //  Initialize PromptStruct.
-    /*
-    CRYPTPROTECT_PROMPTSTRUCT PromptStruct;
-    ZeroMemory(&PromptStruct, sizeof(PromptStruct));
-    PromptStruct.cbSize = sizeof(PromptStruct);
-    PromptStruct.dwPromptFlags = CRYPTPROTECT_PROMPT_ON_PROTECT;
-    PromptStruct.szPrompt = L"This is a user prompt.";
-    /*/
-    //*/
+    // Declare and initialize variables.
+
+    DATA_BLOB DataOut;
+    DATA_BLOB DataVerify;
+    //CRYPTPROTECT_PROMPTSTRUCT PromptStruct;
+    //LPWSTR pDescrOut = NULL;
+
+    DataOut.pbData = (BYTE*)&encrypted[0];
+    DataOut.cbData = encrypted.size();
 
     //-------------------------------------------------------------------
-    //  Begin protect phase.
-    if (CryptProtectData(
-         &plaintext, 
-         NULL,                 // A description string. 
-         NULL,                 // Optional entropy not used.
-         NULL,                 // Reserved.
-         //&PromptStruct,                      // Pass a PromptStruct.
-         NULL,
-         CRYPTPROTECT_AUDIT,
-         &ciphertext));
+    //   Begin unprotect phase.
+    if (CryptUnprotectData(
+        &DataOut,
+        NULL,
+        NULL,                 // Optional entropy
+        NULL,                 // Reserved
+        NULL,                 // Optional PromptStruct
+        0,
+        &DataVerify))
     {
-        *buffer = ciphertext.pbData;
-        result = ciphertext.cbData;
+        result = std::string((const char *)DataVerify.pbData, DataVerify.cbData);
+        LocalFree(DataVerify.pbData);
     }
 
     return result;
@@ -134,15 +121,41 @@ int store(std::istream &input)
         {
             file.write((const char *)encrypted_buffer, encrypted_size);
             LocalFree(encrypted_buffer);  //Could leak if file.write throws, but process is too short lived to care
+            result = 0;
         }
     }
 
     return result;
 }
 
-int get(FILE *) 
+int get(std::ostream &output)
 {
     int result = 1;
+    
+    //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
+    //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
+    
+    std::ifstream file;
+
+    file.open("token.dat", std::ios::binary);
+
+    if(file.is_open())
+    {
+        std::streamsize size;
+        file.seekg(0, std::ios::end);
+        size = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        std::vector<char> buffer(size);
+        if (file.read(buffer.data(), size))
+        {
+            std::string token = decrypt(buffer);
+            output << token;
+            /* worked! */
+            result = 0;
+        }
+    }
+
     return result;
 }
 
@@ -160,7 +173,7 @@ int dispatch(const TCHAR* operation)
     {
         if(_tcscmp(_T("get"), operation) == 0)
         {
-            return get(stdin);
+            return get(std::cout);
         } else if(_tcscmp(_T("store"), operation) == 0) 
         {
             return store(std::cin);
@@ -276,10 +289,6 @@ int _tmain(int argc, TCHAR *argv[])
     if(argc == 2)
     {
         dispatch(argv[1]);
-    }
-    else if(argc == 1234)
-    {
-        coucou();
     }
 
     return result;
