@@ -10,12 +10,17 @@
 #include <vector>
 #include <Wincrypt.h>
 
-void MyHandleError(const char *s);
 
 typedef std::basic_string<TCHAR>   tstring;
 
+static const TCHAR ENCRYPTED_TOKEN_FILE_NAME[] = _T("token.dat");
 static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
+static const BYTE HARDCODED_DPAPI_NOISE[] = {
+	0x79, 0x7B, 0xE9, 0x5D, 0x6B, 0xAB, 0x37, 0x06, 0x57, 0x7D, 0x4C, 0x08,
+	0x0E, 0xDF, 0x27, 0xCE, 0x10, 0x50, 0xEA, 0x9B, 0xBC, 0xA3, 0x5E, 0x6D,
+	0x7B, 0x3C, 0xED, 0xC9, 0xB1, 0x0A, 0x42, 0x0F
+};
 
 std::string decrypt(const std::vector<char>& encrypted)
 {
@@ -29,18 +34,22 @@ std::string decrypt(const std::vector<char>& encrypted)
 
     DATA_BLOB DataOut;
     DATA_BLOB DataVerify;
+    DATA_BLOB entropy;
     //CRYPTPROTECT_PROMPTSTRUCT PromptStruct;
     //LPWSTR pDescrOut = NULL;
 
     DataOut.pbData = (BYTE*)&encrypted[0];
     DataOut.cbData = encrypted.size();
 
+    entropy.pbData = (BYTE*)HARDCODED_DPAPI_NOISE;
+    entropy.cbData = sizeof(HARDCODED_DPAPI_NOISE);
+
     //-------------------------------------------------------------------
     //   Begin unprotect phase.
     if (CryptUnprotectData(
         &DataOut,
         NULL,
-        NULL,                 // Optional entropy
+        &entropy,             // Optional entropy
         NULL,                 // Reserved
         NULL,                 // Optional PromptStruct
         0,
@@ -59,7 +68,7 @@ DWORD encrypt(const std::string& token, BYTE ** buffer)
     DWORD result = 0; //Number of bytes returned
 
     DATA_BLOB plaintext;
-    //DATA_BLOB entropy;
+    DATA_BLOB entropy;
     DATA_BLOB ciphertext;
 
     BYTE *pbDataInput =(BYTE *)token.c_str();
@@ -75,15 +84,17 @@ DWORD encrypt(const std::string& token, BYTE ** buffer)
     PromptStruct.cbSize = sizeof(PromptStruct);
     PromptStruct.dwPromptFlags = CRYPTPROTECT_PROMPT_ON_PROTECT;
     PromptStruct.szPrompt = L"This is a user prompt.";
-    /*/
-    //*/
+    */
+
+    entropy.pbData = (BYTE*)HARDCODED_DPAPI_NOISE;
+    entropy.cbData = sizeof(HARDCODED_DPAPI_NOISE);
 
     //-------------------------------------------------------------------
     //  Begin protect phase.
     if (CryptProtectData(
          &plaintext, 
          NULL,                 // A description string. 
-         NULL,                 // Optional entropy not used.
+         &entropy,             // Optional entropy not used.
          NULL,                 // Reserved.
          //&PromptStruct,                      // Pass a PromptStruct.
          NULL,
@@ -111,7 +122,7 @@ int store(std::istream &input)
 
     std::ofstream file;
 
-    file.open("token.dat", std::ios::binary);
+    file.open(ENCRYPTED_TOKEN_FILE_NAME, std::ios::binary);
 
     if(file.is_open())
     {
@@ -137,7 +148,7 @@ int get(std::ostream &output)
     
     std::ifstream file;
 
-    file.open("token.dat", std::ios::binary);
+    file.open(ENCRYPTED_TOKEN_FILE_NAME, std::ios::binary);
 
     if(file.is_open())
     {
@@ -162,6 +173,7 @@ int get(std::ostream &output)
 int erase() 
 {
     int result = 1;
+    DeleteFile(ENCRYPTED_TOKEN_FILE_NAME);
     return result;
 }
 
@@ -186,101 +198,6 @@ int dispatch(const TCHAR* operation)
     return result;
 }
 
-int old()
-{
-    // Copyright (C) Microsoft.  All rights reserved.
-    // Encrypt data from DATA_BLOB DataIn to DATA_BLOB DataOut.
-    // Then decrypt to DATA_BLOB DataVerify.
-
-    //-------------------------------------------------------------------
-    // Declare and initialize variables.
-
-    DATA_BLOB DataIn;
-    DATA_BLOB DataOut;
-    DATA_BLOB DataVerify;
-    BYTE *pbDataInput =(BYTE *)"Hello world of data protection.";
-    DWORD cbDataInput = strlen((char *)pbDataInput)+1;
-    DataIn.pbData = pbDataInput;    
-    DataIn.cbData = cbDataInput;
-    CRYPTPROTECT_PROMPTSTRUCT PromptStruct;
-    LPWSTR pDescrOut = NULL;
-
-    //-------------------------------------------------------------------
-    //  Begin processing.
-    _tprintf(_T("The data to be encrypted is: %s\n"),pbDataInput);
-
-    //-------------------------------------------------------------------
-    //  Initialize PromptStruct.
-    ZeroMemory(&PromptStruct, sizeof(PromptStruct));
-    PromptStruct.cbSize = sizeof(PromptStruct);
-    PromptStruct.dwPromptFlags = CRYPTPROTECT_PROMPT_ON_PROTECT;
-    PromptStruct.szPrompt = L"This is a user prompt.";
-
-    //-------------------------------------------------------------------
-    //  Begin protect phase.
-    if(CryptProtectData(
-         &DataIn,
-         L"This is the description string.", // A description string. 
-         NULL,                               // Optional entropy not used.
-         NULL,                               // Reserved.
-         &PromptStruct,                      // Pass a PromptStruct.
-         CRYPTPROTECT_AUDIT,
-         &DataOut))
-    {
-         _tprintf(_T("The encryption phase worked. \n"));
-    }
-    else
-    {
-        MyHandleError("Encryption error!");
-    }
-
-    //-------------------------------------------------------------------
-    //   Begin unprotect phase.
-    if (CryptUnprotectData(
-        &DataOut,
-        &pDescrOut,
-        NULL,                 // Optional entropy
-        NULL,                 // Reserved
-        &PromptStruct,        // Optional PromptStruct
-        0,
-        &DataVerify))
-    {
-         _tprintf(_T("The decrypted data is: %s\n"), DataVerify.pbData);
-         _tprintf(_T("The description of the data was: %S\n"),pDescrOut);
-    }
-    else
-    {
-        MyHandleError("Decryption error!");
-    }
-    //-------------------------------------------------------------------
-    // At this point, memcmp could be used to compare DataIn.pbData and 
-    // DataVerify.pbDate for equality. If the two functions worked
-    // correctly, the two byte strings are identical. 
-
-    //-------------------------------------------------------------------
-    //  Clean up.
-    LocalFree(pDescrOut);
-    LocalFree(DataOut.pbData);
-    LocalFree(DataVerify.pbData);
-
-    return 0;
-} // End of main
-
-//-------------------------------------------------------------------
-//  This example uses the function MyHandleError, a simple error
-//  handling function, to print an error message to the  
-//  standard error (stderr) file and exit the program. 
-//  For most applications, replace this function with one 
-//  that does more extensive error reporting.
-
-void MyHandleError(const char *s)
-{
-    fprintf(stderr,"An error occurred in running the program. \n");
-    fprintf(stderr,"%s\n",s);
-    fprintf(stderr, "Error number %ld.\n", GetLastError());
-    fprintf(stderr, "Program terminating. \n");
-    exit(1);
-} // End of MyHandleError
 
 int _tmain(int argc, TCHAR *argv[])
 {
