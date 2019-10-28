@@ -9,13 +9,7 @@
 
 #include <windows.h>
 #include <tchar.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fstream>
-#include <iostream>
-#include <string>
 #include <stdio.h>
-#include <vector>
 #include <Wincrypt.h>
 
-// TODO: reference additional headers your program requires here
+#define MIN(x,y) (x<y?x:y)

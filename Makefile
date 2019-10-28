@@ -69,7 +69,7 @@ $(MAIN): $(OBJS)
 	$(CC) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	$(RM) *.o *~ $(MAIN)
+	$(RM) vault-token-helper/*.o *~ $(MAIN)
 
 depend: $(SRCS)
 	makedepend $(INCLUDES) $^
