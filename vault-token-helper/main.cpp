@@ -1,14 +1,4 @@
-#include <windows.h>
-#include <tchar.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <fstream>
-#include <iostream>
-#include <string>
-#include <stdio.h>
-#include <vector>
-#include <Wincrypt.h>
+#include "stdafx.h"
 
 
 typedef std::basic_string<TCHAR>   tstring;
@@ -100,7 +90,7 @@ DWORD encrypt(const TCHAR* token, DWORD token_len, BYTE ** buffer)
          //&PromptStruct,                      // Pass a PromptStruct.
          NULL,
          CRYPTPROTECT_AUDIT,
-         &ciphertext));
+         &ciphertext))
     {
         *buffer = ciphertext.pbData;
         result = ciphertext.cbData;

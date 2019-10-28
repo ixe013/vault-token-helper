@@ -27,7 +27,7 @@ LFLAGS = -L/home/newhall/lib  -L../lib
 LIBS = -lcrypt32
 
 # define the CPP source files
-SRCS = main.cpp
+SRCS = vault-token-helper\main.cpp
 
 # define the CPP object files 
 #
