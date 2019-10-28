@@ -16,6 +16,7 @@ typedef std::basic_string<TCHAR>   tstring;
 static const TCHAR ENCRYPTED_TOKEN_FILE_NAME[] = _T("token.dat");
 static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
+static const DWORD MAX_TOKEN_SIZE = 256;
 static const BYTE HARDCODED_DPAPI_NOISE[] = {
 	0x79, 0x7B, 0xE9, 0x5D, 0x6B, 0xAB, 0x37, 0x06, 0x57, 0x7D, 0x4C, 0x08,
 	0x0E, 0xDF, 0x27, 0xCE, 0x10, 0x50, 0xEA, 0x9B, 0xBC, 0xA3, 0x5E, 0x6D,
@@ -63,7 +64,7 @@ std::string decrypt(const std::vector<char>& encrypted)
 }
 
 
-DWORD encrypt(const std::string& token, BYTE ** buffer)
+DWORD encrypt(const TCHAR* token, DWORD token_len, BYTE ** buffer)
 {
     DWORD result = 0; //Number of bytes returned
 
@@ -71,8 +72,8 @@ DWORD encrypt(const std::string& token, BYTE ** buffer)
     DATA_BLOB entropy;
     DATA_BLOB ciphertext;
 
-    BYTE *pbDataInput =(BYTE *)token.c_str();
-    DWORD cbDataInput = token.size();  //Do not encrypt the null terminator, could lead to a known plain text attack
+    BYTE *pbDataInput =(BYTE *)token;
+    DWORD cbDataInput = token_len;  //Do not encrypt the null terminator, could lead to a known plain text attack
     plaintext.pbData = pbDataInput;
     plaintext.cbData = cbDataInput;
 
@@ -116,23 +117,33 @@ int store(std::istream &input)
     //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
     //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
     
-    std::string token;
+    HANDLE standard_input = GetStdHandle(STD_INPUT_HANDLE);
 
-    input >> token;
+    if (standard_input != INVALID_HANDLE_VALUE) {
+        TCHAR token[MAX_TOKEN_SIZE];
+        DWORD token_len = 0;
+        if (ReadFile(standard_input, token, MAX_TOKEN_SIZE, &token_len, NULL) && (token_len > 0)) {
+            HANDLE encrypted_token_file = 
+                CreateFile(ENCRYPTED_TOKEN_FILE_NAME, // name of the write
+                           GENERIC_WRITE,          // open for writing
+                           0,                      // do not share
+                           NULL,                   // default security
+                           CREATE_ALWAYS,          // create and overwrite is required
+                           FILE_ATTRIBUTE_NORMAL,  // normal file
+                           NULL);                  // no attr. template
 
-    std::ofstream file;
-
-    file.open(ENCRYPTED_TOKEN_FILE_NAME, std::ios::binary);
-
-    if(file.is_open())
-    {
-        BYTE *encrypted_buffer = NULL;
-        DWORD encrypted_size = encrypt(token, &encrypted_buffer);
-        if (encrypted_size > 0) 
-        {
-            file.write((const char *)encrypted_buffer, encrypted_size);
-            LocalFree(encrypted_buffer);  //Could leak if file.write throws, but process is too short lived to care
-            result = 0;
+            if (encrypted_token_file != INVALID_HANDLE_VALUE) {
+                BYTE *encrypted_buffer = NULL;
+                DWORD encrypted_size = encrypt(token, token_len, &encrypted_buffer);
+                if (encrypted_size > 0) 
+                {
+                    DWORD bytes_written = 0;
+                    if(WriteFile(encrypted_token_file, encrypted_buffer, encrypted_size, &bytes_written, NULL)) {
+                        result = 0;
+                    }
+                    LocalFree(encrypted_buffer);  //Could leak if file.write throws, but process is too short lived to care
+                }
+            }
         }
     }
 
@@ -147,7 +158,7 @@ int get(std::ostream &output)
     //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
     
     std::ifstream file;
-
+               
     file.open(ENCRYPTED_TOKEN_FILE_NAME, std::ios::binary);
 
     if(file.is_open())
