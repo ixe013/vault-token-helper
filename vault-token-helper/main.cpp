@@ -6,15 +6,36 @@ static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
 static const DWORD MAX_TOKEN_SIZE = 256;
 static const DWORD MAX_ENCRYPTED_TOKEN_SIZE = MAX_TOKEN_SIZE + 256;
+
 static const BYTE HARDCODED_DPAPI_NOISE[] = {
    0x79, 0x7B, 0xE9, 0x5D, 0x6B, 0xAB, 0x37, 0x06, 0x57, 0x7D, 0x4C, 0x08,
    0x0E, 0xDF, 0x27, 0xCE, 0x10, 0x50, 0xEA, 0x9B, 0xBC, 0xA3, 0x5E, 0x6D,
    0x7B, 0x3C, 0xED, 0xC9, 0xB1, 0x0A, 0x42, 0x0F
 };
 
+DWORD print_windows_error(DWORD error, HANDLE output) {
+    TCHAR *buffer = NULL;
+    DWORD message_length = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS|FORMAT_MESSAGE_ALLOCATE_BUFFER, NULL, error, 0, (LPTSTR)&buffer, 0, NULL);
+
+#if defined(UNICODE) || defined(_UNICODE)
+    //This is a UNICODE build, but we must output to a MCBS shell
+    char *mcbs_buffer = (char*)LocalAlloc(0, message_length);
+    message_length = WideCharToMultiByte(CP_ACP, 0, buffer, message_length, mcbs_buffer, message_length, NULL, NULL);
+
+    WriteFile(output, mcbs_buffer, message_length, NULL, NULL);
+    LocalFree(mcbs_buffer);
+#else
+    //This code branch never tested because we don't build a non-unicode version...
+    WriteFile(output, buffer, message_length*sizeof(TCHAR), NULL, NULL);
+#endif
+
+    LocalFree(buffer);
+    return message_length;
+}
+
 DWORD decrypt(const BYTE *encrypted, DWORD encrypted_length, BYTE *decrypted, DWORD max_decrypted_length)
 {
-    DWORD result;
+    DWORD result = 0;
 
     DATA_BLOB ciphertext;
     DATA_BLOB plaintext;
@@ -36,7 +57,7 @@ DWORD decrypt(const BYTE *encrypted, DWORD encrypted_length, BYTE *decrypted, DW
         &entropy,             // Optional entropy
         NULL,                 // Reserved
         NULL,                 // Optional PromptStruct
-        0,
+        0,                    //TODO: Support CRYPTPROTECT_VERIFY_PROTECTION
         &plaintext))
     {
         memcpy(decrypted, plaintext.pbData, MIN(plaintext.cbData, max_decrypted_length));
@@ -117,16 +138,29 @@ int store(HANDLE input)
             if (encrypted_token_file != INVALID_HANDLE_VALUE) {
                 BYTE *encrypted_buffer = NULL;
                 DWORD encrypted_size = encrypt(token, token_len, &encrypted_buffer);
+
+                //Secure erase from memory as early as we can
+                //does not set last error
+                SecureZeroMemory(token, sizeof(token));
+
                 if (encrypted_size > 0)
                 {
                     DWORD bytes_written = 0;
                     if(WriteFile(encrypted_token_file, encrypted_buffer, encrypted_size, &bytes_written, NULL)) {
-                        result = 0;
+                        result = ERROR_SUCCESS;
+                    } else {
+                        result = GetLastError();
                     }
                     LocalFree(encrypted_buffer);
+                } else {
+                    result = GetLastError();
                 }
                 CloseHandle(encrypted_token_file);
+            } else {
+                result = GetLastError();
             }
+        } else {
+            result = GetLastError();
         }
     }
 
@@ -157,20 +191,36 @@ int get(HANDLE output)
         {
             BYTE token[MAX_TOKEN_SIZE];
             DWORD read = decrypt(encrypted_token, encrypted_token_size, token, sizeof(token)/sizeof(*token));
-            if (WriteFile(output, token, read, NULL, NULL))
-            {
-                result = 0;
+            if (read > 0) {
+                if (WriteFile(output, token, read, NULL, NULL))
+                {
+                    result = 0;
+                }
+                SecureZeroMemory(token, sizeof(token));
             }
         }
     }
 
-    return result;
+    //If we failed, get Windows last error
+    return result?GetLastError():ERROR_SUCCESS;
 }
 
-int erase()
+DWORD erase()
 {
-    int result = 1;
-    DeleteFile(ENCRYPTED_TOKEN_FILE_NAME);
+    DWORD result = DeleteFile(ENCRYPTED_TOKEN_FILE_NAME);
+
+    if (!result) {
+        result = GetLastError();
+        //If the file is already gone
+        if (result == ERROR_FILE_NOT_FOUND) {
+            //Then that's OK
+            result = ERROR_SUCCESS;
+        }
+    } else {
+        result = ERROR_SUCCESS;
+    }
+
+    //Follow the internal convention of returning 0 on success
     return result;
 }
 
@@ -202,7 +252,10 @@ int _tmain(int argc, TCHAR *argv[])
 
     if(argc == 2)
     {
-        dispatch(argv[1]);
+        DWORD error = dispatch(argv[1]);
+        if (error) {
+            print_windows_error(error, GetStdHandle(STD_ERROR_HANDLE));
+        }
     }
 
     return result;
