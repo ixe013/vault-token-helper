@@ -13,9 +13,17 @@ static const BYTE HARDCODED_DPAPI_NOISE[] = {
    0x7B, 0x3C, 0xED, 0xC9, 0xB1, 0x0A, 0x42, 0x0F
 };
 
+#if defined(DEBUG) || defined(_DEBUG)
+#define trace OutputDebugString
+#else
+#define trace(x)
+#endif
+
 DWORD print_windows_error(DWORD error, HANDLE output) {
     TCHAR *buffer = NULL;
-    DWORD message_length = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS|FORMAT_MESSAGE_ALLOCATE_BUFFER, NULL, error, 0, (LPTSTR)&buffer, 0, NULL);
+    DWORD message_length = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS|FORMAT_MESSAGE_ALLOCATE_BUFFER|FORMAT_MESSAGE_MAX_WIDTH_MASK, NULL, error, 0, (LPTSTR)&buffer, 0, NULL);
+
+    trace(buffer);
 
 #if defined(UNICODE) || defined(_UNICODE)
     //This is a UNICODE build, but we must output to a MCBS shell
@@ -226,18 +234,21 @@ DWORD erase()
 
 int dispatch(const TCHAR* operation)
 {
-    int result = 1;
+    int result = ERROR_INVALID_FUNCTION;
 
     if (operation && *operation)
     {
         if(_tcscmp(_T("get"), operation) == 0)
         {
+            trace(_T("Vault Token Helper get operation started"));
             return get(GetStdHandle(STD_OUTPUT_HANDLE));
         } else if(_tcscmp(_T("store"), operation) == 0)
         {
+            trace(_T("Vault Token Helper store operation started"));
             return store(GetStdHandle(STD_INPUT_HANDLE));
         } else if(_tcscmp(_T("erase"), operation) == 0)
         {
+            trace(_T("Vault Token Helper erase operation started"));
             return erase();
         }
     }
@@ -248,16 +259,16 @@ int dispatch(const TCHAR* operation)
 
 int _tmain(int argc, TCHAR *argv[])
 {
-    int result = 1;
+    int error = 1;
 
     if(argc == 2)
     {
-        DWORD error = dispatch(argv[1]);
+        error = dispatch(argv[1]);
         if (error) {
             print_windows_error(error, GetStdHandle(STD_ERROR_HANDLE));
         }
     }
 
-    return result;
+    return error;
 }
 
