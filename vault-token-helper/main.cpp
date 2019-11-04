@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 
+static const TCHAR VAULT_RC[] = _T(".vault");
 static const TCHAR ENCRYPTED_TOKEN_FILE_NAME[] = _T("encrypted.vault-token");
 static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
@@ -18,6 +19,22 @@ static const BYTE HARDCODED_DPAPI_NOISE[] = {
 #else
 #define trace(x)
 #endif
+
+BOOL ChangeToProfileFolder()
+{
+    TCHAR *buffer = NULL;
+    HRESULT result = SHGetKnownFolderPath(FOLDERID_Profile, 0, NULL, &buffer);
+
+    if (SUCCEEDED(result)) {
+        if(!SetCurrentDirectory(buffer)) {
+            result = E_FAIL;        
+        }
+        CoTaskMemFree(buffer);
+    }
+    
+    return SUCCEEDED(result);
+}
+
 
 DWORD print_windows_error(DWORD error, HANDLE output) {
     TCHAR *buffer = NULL;
@@ -127,49 +144,53 @@ int store(HANDLE input)
 {
     int result = 1;
 
-    //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
-    //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
+    if(ChangeToProfileFolder()) {
+        //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
+        //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
 
-    if (input != INVALID_HANDLE_VALUE) {
-        TCHAR token[MAX_TOKEN_SIZE];
-        DWORD token_len = 0;
-        if (ReadFile(input, token, MAX_TOKEN_SIZE, &token_len, NULL) && (token_len > 0)) {
-            HANDLE encrypted_token_file =
-                CreateFile(ENCRYPTED_TOKEN_FILE_NAME, // name of the write
-                           GENERIC_WRITE,          // open for writing
-                           0,                      // do not share
-                           NULL,                   // default security
-                           CREATE_ALWAYS,          // create and overwrite is required
-                           FILE_ATTRIBUTE_NORMAL,  // normal file
-                           NULL);                  // no attr. template
+        if (input != INVALID_HANDLE_VALUE) {
+            TCHAR token[MAX_TOKEN_SIZE];
+            DWORD token_len = 0;
+            if (ReadFile(input, token, MAX_TOKEN_SIZE, &token_len, NULL) && (token_len > 0)) {
+                HANDLE encrypted_token_file =
+                    CreateFile(ENCRYPTED_TOKEN_FILE_NAME, // name of the write
+                               GENERIC_WRITE,          // open for writing
+                               0,                      // do not share
+                               NULL,                   // default security
+                               CREATE_ALWAYS,          // create and overwrite is required
+                               FILE_ATTRIBUTE_NORMAL,  // normal file
+                               NULL);                  // no attr. template
 
-            if (encrypted_token_file != INVALID_HANDLE_VALUE) {
-                BYTE *encrypted_buffer = NULL;
-                DWORD encrypted_size = encrypt(token, token_len, &encrypted_buffer);
+                if (encrypted_token_file != INVALID_HANDLE_VALUE) {
+                    BYTE *encrypted_buffer = NULL;
+                    DWORD encrypted_size = encrypt(token, token_len, &encrypted_buffer);
 
-                //Secure erase from memory as early as we can
-                //does not set last error
-                SecureZeroMemory(token, sizeof(token));
+                    //Secure erase from memory as early as we can
+                    //does not set last error
+                    SecureZeroMemory(token, sizeof(token));
 
-                if (encrypted_size > 0)
-                {
-                    DWORD bytes_written = 0;
-                    if(WriteFile(encrypted_token_file, encrypted_buffer, encrypted_size, &bytes_written, NULL)) {
-                        result = ERROR_SUCCESS;
+                    if (encrypted_size > 0)
+                    {
+                        DWORD bytes_written = 0;
+                        if(WriteFile(encrypted_token_file, encrypted_buffer, encrypted_size, &bytes_written, NULL)) {
+                            result = ERROR_SUCCESS;
+                        } else {
+                            result = GetLastError();
+                        }
+                        LocalFree(encrypted_buffer);
                     } else {
                         result = GetLastError();
                     }
-                    LocalFree(encrypted_buffer);
+                    CloseHandle(encrypted_token_file);
                 } else {
                     result = GetLastError();
                 }
-                CloseHandle(encrypted_token_file);
             } else {
                 result = GetLastError();
             }
-        } else {
-            result = GetLastError();
         }
+    } else {
+		trace(_T("Could not change current directory to profile folder"));
     }
 
     return result;
@@ -179,34 +200,47 @@ int get(HANDLE output)
 {
     int result = 1;
 
-    //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
-    //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
+    if(ChangeToProfileFolder()) {
+        //TCHAR vault_addr[MAX_VAULT_ADDR_SIZE];
+        //DWORD vault_addr_size = GetEnvironmentVariable(VAULT_ADDR, vault_addr, MAX_VAULT_ADDR_SIZE);
 
-    HANDLE file = CreateFile(ENCRYPTED_TOKEN_FILE_NAME, // name of the write
-                           GENERIC_READ,           // open for writing
-                           0,                      // do not share
-                           NULL,                   // default security
-                           OPEN_EXISTING,          // create and overwrite is required
-                           FILE_ATTRIBUTE_NORMAL,  // normal file
-                           NULL);                  // no attr. template
+        HANDLE file = CreateFile(ENCRYPTED_TOKEN_FILE_NAME, // name of the write
+                               GENERIC_READ,           // open for writing
+                               0,                      // do not share
+                               NULL,                   // default security
+                               OPEN_EXISTING,          // create and overwrite is required
+                               FILE_ATTRIBUTE_NORMAL,  // normal file
+                               NULL);                  // no attr. template
 
-    if (file != INVALID_HANDLE_VALUE)
-    {
-        BYTE encrypted_token[MAX_ENCRYPTED_TOKEN_SIZE];
-        DWORD encrypted_token_size = GetFileSize(file, NULL);
-
-        if (ReadFile(file, encrypted_token, MAX_ENCRYPTED_TOKEN_SIZE, &encrypted_token_size, NULL) && (encrypted_token_size > 0))
+        if (file != INVALID_HANDLE_VALUE)
         {
-            BYTE token[MAX_TOKEN_SIZE];
-            DWORD read = decrypt(encrypted_token, encrypted_token_size, token, sizeof(token)/sizeof(*token));
-            if (read > 0) {
-                if (WriteFile(output, token, read, NULL, NULL))
-                {
-                    result = 0;
+            BYTE encrypted_token[MAX_ENCRYPTED_TOKEN_SIZE];
+            DWORD encrypted_token_size = GetFileSize(file, NULL);
+
+            if (ReadFile(file, encrypted_token, MAX_ENCRYPTED_TOKEN_SIZE, &encrypted_token_size, NULL) && (encrypted_token_size > 0))
+            {
+                BYTE token[MAX_TOKEN_SIZE];
+                DWORD read = decrypt(encrypted_token, encrypted_token_size, token, sizeof(token)/sizeof(*token));
+                if (read > 0) {
+                    if (WriteFile(output, token, read, NULL, NULL))
+                    {
+                        result = 0;
+                    }
+                    SecureZeroMemory(token, sizeof(token));
                 }
-                SecureZeroMemory(token, sizeof(token));
+            }
+        } else {
+            if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+                //Mimic Vault behavior: If the file is missing, let it run. Vault (client) doesn't know
+                //if the operation it is about to carry requires a token or not. If a token helper is 
+                //configured, Vault will ask it for a token. If there are no token to begin with, let
+                //the command run. It might work anonymously...
+                result = 0;
             }
         }
+    } else {
+        result = 1;
+        trace(_T("Could not change current directory to profile folder"));
     }
 
     //If we failed, get Windows last error
@@ -215,22 +249,29 @@ int get(HANDLE output)
 
 DWORD erase()
 {
-    DWORD result = DeleteFile(ENCRYPTED_TOKEN_FILE_NAME);
+    DWORD result = ERROR_ERRORS_ENCOUNTERED;
 
-    if (!result) {
-        result = GetLastError();
-        //If the file is already gone
-        if (result == ERROR_FILE_NOT_FOUND) {
-            //Then that's OK
+    if(ChangeToProfileFolder()) {
+        result = DeleteFile(ENCRYPTED_TOKEN_FILE_NAME);
+
+        if (!result) {
+            result = GetLastError();
+            //If the file is already gone
+            if (result == ERROR_FILE_NOT_FOUND) {
+                //Then that's OK
+                result = ERROR_SUCCESS;
+            }
+        } else {
             result = ERROR_SUCCESS;
         }
     } else {
-        result = ERROR_SUCCESS;
+        trace(_T("Could not change current directory to profile folder"));
     }
 
     //Follow the internal convention of returning 0 on success
     return result;
 }
+
 
 int dispatch(const TCHAR* operation)
 {
