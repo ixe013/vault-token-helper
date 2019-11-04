@@ -1,7 +1,7 @@
 #include "stdafx.h"
 
 
-static const TCHAR ENCRYPTED_TOKEN_FILE_NAME[] = _T("token.dat");
+static const TCHAR ENCRYPTED_TOKEN_FILE_NAME[] = _T("encrypted.vault-token");
 static const TCHAR VAULT_ADDR[] = _T("VAULT_ADDR");
 static const DWORD MAX_VAULT_ADDR_SIZE = 8192;
 static const DWORD MAX_TOKEN_SIZE = 256;
@@ -25,17 +25,17 @@ DWORD print_windows_error(DWORD error, HANDLE output) {
 
     trace(buffer);
 
-#if defined(UNICODE) || defined(_UNICODE)
-    //This is a UNICODE build, but we must output to a MCBS shell
+    //This is a UNICODE build, but we must output back to Vault who expect UTF-8
+    //First compute the message lenth
+    message_length = WideCharToMultiByte(CP_UTF8, 0, buffer, message_length, NULL, 0, NULL, NULL);
+    //Allocate the required space
     char *mcbs_buffer = (char*)LocalAlloc(0, message_length);
-    message_length = WideCharToMultiByte(CP_ACP, 0, buffer, message_length, mcbs_buffer, message_length, NULL, NULL);
+    //Convert to UTF-8
+    WideCharToMultiByte(CP_UTF8, 0, buffer, message_length, mcbs_buffer, message_length, NULL, NULL);
+    //message_length = WideCharToMultiByte(GetACP(), 0, buffer, message_length, mcbs_buffer, message_length, NULL, NULL);
 
     WriteFile(output, mcbs_buffer, message_length, NULL, NULL);
     LocalFree(mcbs_buffer);
-#else
-    //This code branch never tested because we don't build a non-unicode version...
-    WriteFile(output, buffer, message_length*sizeof(TCHAR), NULL, NULL);
-#endif
 
     LocalFree(buffer);
     return message_length;
